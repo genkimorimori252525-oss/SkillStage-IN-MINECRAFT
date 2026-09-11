@@ -1,0 +1,31 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="All Rights Reserved"
+
+[[mods]]
+modId="skillstage_vfx_runtime"
+version="${version}"
+displayName="KNEEKURA VFX Runtime"
+authors="KNEEKURA"
+description='''Runtime playback bridge for validated KNEEKURA VFX target packages.'''
+
+[[dependencies.skillstage_vfx_runtime]]
+modId="forge"
+mandatory=true
+versionRange="[47.1.3,)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.skillstage_vfx_runtime]]
+modId="minecraft"
+mandatory=true
+versionRange="[1.20.1,1.20.2)"
+ordering="NONE"
+side="CLIENT"
+
+[[dependencies.skillstage_vfx_runtime]]
+modId="photon"
+mandatory=true
+versionRange="[1.1.17,1.1.18)"
+ordering="AFTER"
+side="CLIENT"
