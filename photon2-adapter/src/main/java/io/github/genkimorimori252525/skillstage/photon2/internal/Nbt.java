@@ -99,7 +99,24 @@ public final class Nbt {
             Tag value = values.get(key);
             return value instanceof IntTag i ? Optional.of(i.value()) : Optional.empty();
         }
+        public Optional<Boolean> booleanValue(String key) {
+            Tag value = values.get(key);
+            return value instanceof ByteTag b ? Optional.of(b.value() != 0) : Optional.empty();
+        }
+        public Optional<Double> numberValue(String key) {
+            return number(values.get(key));
+        }
         public int typeId() { return 10; }
+    }
+
+    public static Optional<Double> number(Tag tag) {
+        if (tag instanceof ByteTag n) return Optional.of((double) n.value());
+        if (tag instanceof ShortTag n) return Optional.of((double) n.value());
+        if (tag instanceof IntTag n) return Optional.of((double) n.value());
+        if (tag instanceof LongTag n) return Optional.of((double) n.value());
+        if (tag instanceof FloatTag n) return Optional.of((double) n.value());
+        if (tag instanceof DoubleTag n) return Optional.of(n.value());
+        return Optional.empty();
     }
 
     public record Document(String rootName, CompoundTag root) {

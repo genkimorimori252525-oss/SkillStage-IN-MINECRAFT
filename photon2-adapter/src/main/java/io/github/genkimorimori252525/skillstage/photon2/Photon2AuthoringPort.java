@@ -34,6 +34,7 @@ public final class Photon2AuthoringPort implements AuthoringPort {
     public static final String NATIVE_PATH = "authoring/photon2/native.bin";
     public static final String SOURCE_PATH = "authoring/photon2/source.json";
     public static final String INDEX_PATH = "semantic/photon2/object-index.json";
+    public static final String PARTICLES_PATH = "semantic/photon2/particles.json";
     public static final String SIDECAR_MAP_PATH = "authoring/photon2/sidecars.json";
     private static final String SIDECAR_PREFIX = "authoring/photon2/sidecars/";
 
@@ -50,57 +51,92 @@ public final class Photon2AuthoringPort implements AuthoringPort {
     private final Photon2NativeCodec codec = new Photon2NativeCodec();
 
     @Override
-    public PortDescriptor descriptor() {
-        return DESCRIPTOR;
-    }
+    public PortDescriptor descriptor() { return DESCRIPTOR; }
 
     @Override
     public KvfxProject importArtifact(NativeArtifact artifact) throws VfxPortException {
-        Photon2Document document = codec.parse(artifact);
         byte[] nativeBytes = artifact.primaryBytes();
+        codec.validateNativeEnvelope(artifact.name(), nativeBytes);
+        Photon2NativeKind nativeKind = codec.nativeKind(artifact.name());
+
+        Photon2Document document = null;
+        String parseError = null;
+        try {
+            document = codec.parse(artifact);
+        } catch (VfxPortException e) {
+            parseError = e.getMessage();
+        }
 
         JsonObject photonMeta = new JsonObject();
         photonMeta.addProperty("sourceName", artifact.name());
-        photonMeta.addProperty("nativeKind", document.kind().name());
-        photonMeta.addProperty("projectVersion", document.projectVersion());
+        photonMeta.addProperty("nativeKind", nativeKind.name());
         photonMeta.addProperty("sha256", sha256(nativeBytes));
         photonMeta.addProperty("nativeBytes", nativeBytes.length);
-        photonMeta.addProperty("objectCount", document.objects().size());
-        photonMeta.addProperty("timelinePresent", document.timelinePresent());
         photonMeta.addProperty("upstreamCommit", "609a975cea104fd4e067a94f222a7dd1d619d263");
+        if (document != null) {
+            photonMeta.addProperty("parseStatus", "parsed");
+            photonMeta.addProperty("projectVersion", document.projectVersion());
+            photonMeta.addProperty("objectCount", document.objects().size());
+            photonMeta.addProperty("timelinePresent", document.timelinePresent());
+            photonMeta.addProperty("semanticParticleCount", document.particles().size());
+        } else {
+            photonMeta.addProperty("parseStatus", "opaque");
+            photonMeta.addProperty("parseError", parseError == null ? "unknown parse failure" : parseError);
+        }
 
         KvfxManifest manifest;
         try {
-            manifest = KvfxManifest.create(
-                    UUID.nameUUIDFromBytes(nativeBytes),
-                    "kneekura-photon2-adapter",
-                    "0.1.0"
-            ).withExtension("photon2", photonMeta);
+            manifest = KvfxManifest.create(UUID.nameUUIDFromBytes(nativeBytes), "kneekura-photon2-adapter", "0.2.0")
+                    .withExtension("photon2", photonMeta);
         } catch (KvfxFormatException e) {
             throw new VfxPortException("Failed to create KVFX manifest", e);
         }
 
-        JsonObject source = photonMeta.deepCopy();
-        JsonObject index = new JsonObject();
-        index.addProperty("sourceKind", document.kind().name());
-        index.addProperty("projectVersion", document.projectVersion());
-        index.addProperty("timelinePresent", document.timelinePresent());
-        JsonArray objects = new JsonArray();
-        for (Photon2ObjectIndex object : document.objects()) {
-            JsonObject item = new JsonObject();
-            item.addProperty("index", object.index());
-            item.addProperty("type", object.type());
-            item.addProperty("objectVersion", object.objectVersion());
-            item.addProperty("hasData", object.hasData());
-            item.addProperty("semanticStatus", object.isParticleEmitter() ? "candidate" : "opaque");
-            objects.add(item);
-        }
-        index.add("objects", objects);
-
         KvfxProject.Builder builder = KvfxProject.builder(manifest)
                 .put(NATIVE_PATH, nativeBytes)
-                .putUtf8(SOURCE_PATH, GSON.toJson(source) + "\n")
-                .putUtf8(INDEX_PATH, GSON.toJson(index) + "\n");
+                .putUtf8(SOURCE_PATH, GSON.toJson(photonMeta) + "\n");
+
+        JsonObject index = new JsonObject();
+        JsonArray particles = new JsonArray();
+        if (document != null) {
+            index.addProperty("sourceKind", document.kind().name());
+            index.addProperty("projectVersion", document.projectVersion());
+            index.addProperty("timelinePresent", document.timelinePresent());
+            JsonArray objects = new JsonArray();
+            java.util.Set<Integer> extracted = new java.util.HashSet<>();
+            for (Photon2ParticleSemantic particle : document.particles()) extracted.add(particle.objectIndex());
+            for (Photon2ObjectIndex object : document.objects()) {
+                JsonObject item = new JsonObject();
+                item.addProperty("index", object.index());
+                item.addProperty("type", object.type());
+                item.addProperty("objectVersion", object.objectVersion());
+                item.addProperty("hasData", object.hasData());
+                item.addProperty("semanticStatus", extracted.contains(object.index()) ? "extracted" : "opaque");
+                objects.add(item);
+            }
+            index.add("objects", objects);
+
+            for (Photon2ParticleSemantic particle : document.particles()) {
+                JsonObject item = new JsonObject();
+                item.addProperty("objectIndex", particle.objectIndex());
+                item.addProperty("name", particle.name());
+                item.addProperty("objectVersion", particle.objectVersion());
+                addNullable(item, "duration", particle.duration());
+                addNullable(item, "looping", particle.looping());
+                addNullable(item, "prewarm", particle.prewarm());
+                addNullable(item, "maxParticles", particle.maxParticles());
+                addNullable(item, "parallelUpdate", particle.parallelUpdate());
+                addNullable(item, "startDelay", particle.startDelay());
+                addNullable(item, "startLifetime", particle.startLifetime());
+                addNullable(item, "startSpeed", particle.startSpeed());
+                particles.add(item);
+            }
+        } else {
+            index.addProperty("parseStatus", "opaque");
+            index.addProperty("parseError", parseError);
+        }
+        builder.putUtf8(INDEX_PATH, GSON.toJson(index) + "\n");
+        builder.putUtf8(PARTICLES_PATH, GSON.toJson(particles) + "\n");
 
         JsonObject sidecarMap = new JsonObject();
         for (Map.Entry<String, byte[]> entry : artifact.sidecars().entrySet()) {
@@ -118,7 +154,6 @@ public final class Photon2AuthoringPort implements AuthoringPort {
     public NativeArtifact exportProject(KvfxProject project) throws VfxPortException {
         byte[] nativeBytes = project.readEntry(NATIVE_PATH)
                 .orElseThrow(() -> new VfxPortException("KVFX project has no preserved Photon 2 native artifact"));
-
         JsonObject source = parseJsonObject(project, SOURCE_PATH);
         String sourceName = source.has("sourceName") ? source.get("sourceName").getAsString() : "effect.fxproj";
 
@@ -138,31 +173,39 @@ public final class Photon2AuthoringPort implements AuthoringPort {
 
     @Override
     public FidelityReport assess(KvfxProject project) {
-        boolean nativePresent = project.readEntry(NATIVE_PATH).isPresent();
-        if (!nativePresent) {
-            return new FidelityReport(
-                    RepresentationLevel.OPAQUE,
-                    EditabilityLevel.NONE,
-                    ReplayLevel.SOURCE_REQUIRED,
-                    TargetSupportLevel.BLOCKED,
-                    List.of("No preserved Photon 2 native artifact is present")
-            );
+        if (project.readEntry(NATIVE_PATH).isEmpty()) {
+            return new FidelityReport(RepresentationLevel.OPAQUE, EditabilityLevel.NONE,
+                    ReplayLevel.SOURCE_REQUIRED, TargetSupportLevel.BLOCKED,
+                    List.of("No preserved Photon 2 native artifact is present"));
+        }
+        JsonObject source;
+        try {
+            source = parseJsonObject(project, SOURCE_PATH);
+        } catch (VfxPortException e) {
+            return new FidelityReport(RepresentationLevel.NATIVE, EditabilityLevel.NONE,
+                    ReplayLevel.EXACT, TargetSupportLevel.SOURCE_REQUIRED,
+                    List.of("Native bytes are preserved but Photon source metadata is invalid"));
         }
         List<String> limitations = new ArrayList<>();
-        limitations.add("P2 preserves Photon native data exactly but does not yet rewrite semantic edits into Photon NBT");
-        limitations.add("Only a bounded ParticleEmitter semantic subset becomes editable in the next capability slice");
-        return new FidelityReport(
-                RepresentationLevel.NATIVE,
-                EditabilityLevel.NONE,
-                ReplayLevel.EXACT,
-                TargetSupportLevel.SOURCE_REQUIRED,
-                limitations
-        );
+        if ("opaque".equals(source.has("parseStatus") ? source.get("parseStatus").getAsString() : "")) {
+            limitations.add("Photon structure could not be parsed; the artifact is preserved as opaque native data");
+        } else {
+            limitations.add("Only Photon project v5 / particle_emitter v2 bounded scalar semantics are extracted");
+        }
+        limitations.add("P2 does not yet rewrite semantic edits into Photon NBT");
+        return new FidelityReport(RepresentationLevel.NATIVE, EditabilityLevel.NONE,
+                ReplayLevel.EXACT, TargetSupportLevel.SOURCE_REQUIRED, limitations);
+    }
+
+    private static void addNullable(JsonObject object, String key, Number value) {
+        if (value == null) object.add(key, com.google.gson.JsonNull.INSTANCE); else object.addProperty(key, value);
+    }
+    private static void addNullable(JsonObject object, String key, Boolean value) {
+        if (value == null) object.add(key, com.google.gson.JsonNull.INSTANCE); else object.addProperty(key, value);
     }
 
     private static JsonObject parseJsonObject(KvfxProject project, String path) throws VfxPortException {
-        String json = project.readUtf8(path)
-                .orElseThrow(() -> new VfxPortException("KVFX project is missing " + path));
+        String json = project.readUtf8(path).orElseThrow(() -> new VfxPortException("KVFX project is missing " + path));
         try {
             var parsed = com.google.gson.JsonParser.parseString(json);
             if (!parsed.isJsonObject()) throw new IllegalArgumentException("not an object");
