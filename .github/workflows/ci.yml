@@ -39,3 +39,19 @@ jobs:
           gradle-version: '8.1.1'
       - name: Build Forge 1.20.1 runtime mod
         run: gradle --no-daemon -p minecraft/forge1201-runtime build
+      - name: Write runtime JAR SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          jar="$(find minecraft/forge1201-runtime/build/libs -maxdepth 1 -type f -name '*.jar' ! -name '*sources*' | sort | head -n 1)"
+          test -n "$jar"
+          sha256sum "$jar" | tee "$jar.sha256"
+      - name: Upload in-game acceptance bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: skillstage-vfx-runtime-forge1201
+          path: |
+            minecraft/forge1201-runtime/build/libs/*.jar
+            minecraft/forge1201-runtime/build/libs/*.jar.sha256
+          if-no-files-found: error
+          retention-days: 14
